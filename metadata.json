@@ -1,0 +1,5 @@
+{
+  "name": "Copy of KubeLog-X",
+  "description": "A lightweight, secure, AI-powered Kubernetes log viewer and analyzer. Designed as a cost-effective alternative to heavy observability stacks.",
+  "requestFramePermissions": []
+}
