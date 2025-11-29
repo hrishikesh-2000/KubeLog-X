@@ -9,7 +9,7 @@
     "start": "NODE_ENV=production tsx server.ts"
   },
   "dependencies": {
-    "@google/genai": "^0.1.0",
+    "@google/genai": "*",
     "@kubernetes/client-node": "^0.21.0",
     "cors": "^2.8.5",
     "express": "^4.19.2",
