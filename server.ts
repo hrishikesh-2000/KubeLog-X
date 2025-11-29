@@ -1,4 +1,5 @@
 
+import 'dotenv/config'; // Load .env file
 import express from 'express';
 import cors from 'cors';
 import * as k8s from '@kubernetes/client-node';

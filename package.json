@@ -12,6 +12,7 @@
     "@google/genai": "*",
     "@kubernetes/client-node": "^0.21.0",
     "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
     "express": "^4.19.2",
     "lucide-react": "^0.368.0",
     "react": "^18.2.0",
