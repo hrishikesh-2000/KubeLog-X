@@ -1,0 +1,71 @@
+
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kubelog-x-sa
+  namespace: default
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kubelog-x-reader
+rules:
+- apiGroups: [""]
+  resources: ["pods", "pods/log", "namespaces"]
+  verbs: ["get", "watch", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kubelog-x-reader-binding
+subjects:
+- kind: ServiceAccount
+  name: kubelog-x-sa
+  namespace: default
+roleRef:
+  kind: ClusterRole
+  name: kubelog-x-reader
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kubelog-x
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kubelog-x
+  template:
+    metadata:
+      labels:
+        app: kubelog-x
+    spec:
+      serviceAccountName: kubelog-x-sa
+      containers:
+      - name: kubelog-x
+        image: kubelog-x:latest # Replace with your registry image
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 3001
+        env:
+        - name: NODE_ENV
+          value: "production"
+        # REPLACE THIS WITH YOUR ACTUAL KEY
+        - name: API_KEY
+          value: "AIzaSy..." 
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kubelog-x-service
+  namespace: default
+spec:
+  selector:
+    app: kubelog-x
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 3001
+  type: ClusterIP

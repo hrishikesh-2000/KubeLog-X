@@ -1,15 +1,15 @@
-import React, { useState, useEffect, useCallback } from 'react';
+
+import React, { useState, useEffect, useRef } from 'react';
 import Sidebar from './components/Sidebar';
 import LogViewer from './components/LogViewer';
 import AIAnalysisModal from './components/AIAnalysisModal';
-import { fetchNamespaces, fetchPods, generateLogEntry } from './services/mockK8s';
+import { fetchNamespaces, fetchPods, getClusters } from './services/k8sService';
 import { analyzeLogsWithGemini } from './services/geminiService';
-import { CLUSTERS } from './constants';
-import { Namespace, Pod, LogEntry, AIAnalysisResult } from './types';
+import { Namespace, Pod, LogEntry, AIAnalysisResult, LogLevel } from './types';
 
 function App() {
   // --- State ---
-  const [selectedCluster, setSelectedCluster] = useState<string>(CLUSTERS[0].id);
+  const [selectedCluster, setSelectedCluster] = useState<string>('c1');
   const [selectedNamespace, setSelectedNamespace] = useState<string>('all');
   const [selectedPod, setSelectedPod] = useState<Pod | null>(null);
   
@@ -19,6 +19,7 @@ function App() {
   // Log State
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
+  const eventSourceRef = useRef<EventSource | null>(null);
   
   // AI State
   const [isAIModalOpen, setIsAIModalOpen] = useState(false);
@@ -36,41 +37,89 @@ function App() {
       setPods(ps);
     };
     loadData();
+    
+    // Refresh Pod list every 10 seconds to catch status changes
+    const interval = setInterval(async () => {
+        const ps = await fetchPods(selectedNamespace);
+        setPods(ps);
+    }, 10000);
+
+    return () => clearInterval(interval);
   }, []);
 
   // Filter Pods when Namespace changes
   useEffect(() => {
     const updatePods = async () => {
-      setPods([]); // clear momentarily to show loading if we had a loading state
+      // Don't clear pods immediately to avoid flicker
       const ps = await fetchPods(selectedNamespace);
       setPods(ps);
-      // Deselect pod if it's no longer in the list
+      
+      // If selected pod is gone (e.g. deleted), deselect it
       if (selectedPod && !ps.find(p => p.id === selectedPod.id)) {
-        setSelectedPod(null);
-        setLogs([]);
-        setIsStreaming(false);
+        // Optional: Keep viewing logs of dead pod? For now, we clear.
+        // setSelectedPod(null); 
       }
     };
     updatePods();
-  }, [selectedNamespace, selectedPod]);
+  }, [selectedNamespace]);
 
-  // Streaming Logic
+  // Streaming Logic (Real SSE)
   useEffect(() => {
-    let interval: ReturnType<typeof setInterval>;
-
-    if (isStreaming && selectedPod) {
-      interval = setInterval(() => {
-        const newLog = generateLogEntry(selectedPod);
-        setLogs(prev => {
-           // Keep buffer limited to 500 lines
-           const newLogs = [...prev, newLog];
-           if (newLogs.length > 500) return newLogs.slice(newLogs.length - 500);
-           return newLogs;
-        });
-      }, 800); // New log every 800ms
+    // Cleanup previous stream
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
+      eventSourceRef.current = null;
     }
 
-    return () => clearInterval(interval);
+    if (isStreaming && selectedPod) {
+      const url = `/api/logs/stream?namespace=${selectedPod.namespace}&pod=${selectedPod.name}`;
+      console.log("Connecting to stream:", url);
+      
+      const evtSource = new EventSource(url);
+      eventSourceRef.current = evtSource;
+
+      evtSource.onmessage = (event) => {
+        try {
+          const newEntry: Partial<LogEntry> = JSON.parse(event.data);
+          
+          // Naive level parser since K8s raw logs are just strings usually
+          let level = LogLevel.INFO;
+          const msgUpper = newEntry.message?.toUpperCase() || '';
+          if (msgUpper.includes('ERROR') || msgUpper.includes('EXCEPTION')) level = LogLevel.ERROR;
+          else if (msgUpper.includes('WARN')) level = LogLevel.WARN;
+          else if (msgUpper.includes('DEBUG')) level = LogLevel.DEBUG;
+
+          const logWithId: LogEntry = {
+            id: Math.random().toString(36).substring(2, 9),
+            timestamp: newEntry.timestamp || new Date().toISOString(),
+            message: newEntry.message || '',
+            level: level,
+            podId: selectedPod.id
+          };
+
+          setLogs(prev => {
+             const newLogs = [...prev, logWithId];
+             // Limit buffer to 1000 lines
+             if (newLogs.length > 1000) return newLogs.slice(newLogs.length - 1000);
+             return newLogs;
+          });
+        } catch (e) {
+          console.error("Error parsing log event", e);
+        }
+      };
+
+      evtSource.onerror = (err) => {
+        console.error("EventSource failed:", err);
+        evtSource.close();
+        setIsStreaming(false); // Stop UI toggle
+      };
+    }
+
+    return () => {
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+      }
+    };
   }, [isStreaming, selectedPod]);
 
   // --- Handlers ---
@@ -80,12 +129,7 @@ function App() {
     
     setSelectedPod(pod);
     setLogs([]); // Clear logs when switching
-    setIsStreaming(true); // Auto start streaming
-    
-    // Simulate initial fetch of historical logs (last 10 lines)
-    const initialLogs = Array.from({ length: 10 }).map(() => generateLogEntry(pod));
-    // Sort by timestamp if we were generating real times, but here order of creation matches
-    setLogs(initialLogs);
+    setIsStreaming(true); // Auto start streaming on select
   };
 
   const handleAIAnalyze = async () => {
@@ -109,7 +153,7 @@ function App() {
       
       {/* Sidebar */}
       <Sidebar 
-        clusters={CLUSTERS}
+        clusters={getClusters()}
         namespaces={namespaces}
         pods={pods}
         selectedCluster={selectedCluster}
